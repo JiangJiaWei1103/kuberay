@@ -53,13 +53,17 @@ type RayJobReconciler struct {
 type RayJobReconcilerOptions struct {
 	RayJobMetricsManager  *metrics.RayJobMetricsManager
 	BatchSchedulerManager *batchscheduler.SchedulerManager
+	DashboardClientFunc   func(rayCluster *rayv1.RayCluster, url string) (dashboardclient.RayDashboardClientInterface, error)
 }
 
-// NewRayJobReconciler returns a new reconcile.Reconciler
+// NewRayJobReconciler returns a new reconcile.Reconciler.
+// The dashboard client function is set explicitly if options.DashboardClientFunc is set, for example:
+// a cached client factory overrides the original dashboard client function when AsyncJobInfoQuery is enabled.
+// Callers decide which factory to pass, so the controller does not depend on feature flags.
 func NewRayJobReconciler(mgr manager.Manager, options RayJobReconcilerOptions, provider utils.ClientProvider) *RayJobReconciler {
 	dashboardClientFunc := provider.GetDashboardClient(mgr)
-	if features.Enabled(features.AsyncJobInfoQuery) {
-		dashboardClientFunc = dashboardclient.GetCachedDashboardClientFunc()
+	if options.DashboardClientFunc != nil {
+		dashboardClientFunc = options.DashboardClientFunc
 	}
 	return &RayJobReconciler{
 		Client:              mgr.GetClient(),

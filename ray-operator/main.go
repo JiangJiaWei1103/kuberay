@@ -283,6 +283,10 @@ func main() {
 	exitOnError(ray.NewRayServiceReconciler(mgr, config).SetupWithManager(mgr, config.ReconcileConcurrency),
 		"unable to create controller", "controller", "RayService")
 
+	rayJobOptions := ray.RayJobReconcilerOptions{
+		RayJobMetricsManager:  rayJobMetricsManager,
+		BatchSchedulerManager: batchSchedulerManager,
+	}
 	if features.Enabled(features.AsyncJobInfoQuery) {
 		cacheManager := mgr.GetCache()
 
@@ -307,23 +311,22 @@ func main() {
 			exitOnError(fmt.Errorf("async job info query cache expiry %s must be greater than query interval %s", cacheExpiry, queryInterval), "invalid async job info query cache expiry")
 		}
 
+		// Background goroutines use the original dashboard client to query the Ray dashboard.
+		rayDashboardClientFunc := config.GetDashboardClient(mgr)
 		workerPool, workerPoolErr := dashboardclient.InitWorkerPool(
 			ctx,
 			cacheManager,
 			numWorkers,
 			queryInterval,
 			cacheExpiry,
-			config.GetDashboardClient(mgr),
+			rayDashboardClientFunc,
 		)
 		exitOnError(workerPoolErr, "unable to create worker pool for async job info query")
 
 		workerPool.Start(ctx)
+		rayJobOptions.DashboardClientFunc = dashboardclient.GetCachedDashboardClientFunc()
 	}
 
-	rayJobOptions := ray.RayJobReconcilerOptions{
-		RayJobMetricsManager:  rayJobMetricsManager,
-		BatchSchedulerManager: batchSchedulerManager,
-	}
 	exitOnError(ray.NewRayJobReconciler(mgr, rayJobOptions, config).SetupWithManager(mgr, config.ReconcileConcurrency),
 		"unable to create controller", "controller", "RayJob")
 
