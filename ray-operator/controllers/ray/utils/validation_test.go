@@ -2063,6 +2063,51 @@ func TestValidateClusterUpgradeOptions(t *testing.T) {
 	}
 }
 
+func TestRayServiceIncrementalUpgradeWarnings(t *testing.T) {
+	features.SetFeatureGateDuringTest(t, features.RayServiceIncrementalUpgrade, true)
+
+	baseOpts := func(maxSurge *int32, step int32) *rayv1.RayServiceUpgradeStrategy {
+		return &rayv1.RayServiceUpgradeStrategy{
+			Type: ptr.To(rayv1.RayServiceNewClusterWithIncrementalUpgrade),
+			ClusterUpgradeOptions: &rayv1.ClusterUpgradeOptions{
+				MaxSurgePercent:  maxSurge,
+				StepSizePercent:  ptr.To(step),
+				IntervalSeconds:  ptr.To(int32(10)),
+				GatewayClassName: "istio",
+			},
+		}
+	}
+	raySvc := func(us *rayv1.RayServiceUpgradeStrategy) *rayv1.RayService {
+		return &rayv1.RayService{
+			Spec: rayv1.RayServiceSpec{
+				RayClusterSpec:  *createBasicRayClusterSpec(),
+				UpgradeStrategy: us,
+			},
+		}
+	}
+
+	t.Run("no warning when step equals maxSurge", func(t *testing.T) {
+		w := RayServiceIncrementalUpgradeWarnings(raySvc(baseOpts(ptr.To(int32(30)), 30)))
+		assert.Empty(t, w)
+	})
+	t.Run("warning when step exceeds maxSurge", func(t *testing.T) {
+		w := RayServiceIncrementalUpgradeWarnings(raySvc(baseOpts(ptr.To(int32(20)), 50)))
+		require.Len(t, w, 1)
+		assert.Contains(t, w[0], "stepSizePercent (50)")
+		assert.Contains(t, w[0], "maxSurgePercent (20)")
+	})
+	t.Run("no warning when maxSurge omitted defaults to 100", func(t *testing.T) {
+		w := RayServiceIncrementalUpgradeWarnings(raySvc(baseOpts(nil, 50)))
+		assert.Empty(t, w)
+	})
+	t.Run("no warning when not incremental upgrade", func(t *testing.T) {
+		w := RayServiceIncrementalUpgradeWarnings(raySvc(&rayv1.RayServiceUpgradeStrategy{
+			Type: ptr.To(rayv1.RayServiceNewCluster),
+		}))
+		assert.Empty(t, w)
+	})
+}
+
 func TestValidateRayClusterSpec_IdleTimeoutSeconds(t *testing.T) {
 	// Util function to create a RayCluster spec.
 	createSpec := func() rayv1.RayClusterSpec {

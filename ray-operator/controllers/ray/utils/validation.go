@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/apimachinery/pkg/util/version"
+	"k8s.io/utils/ptr"
 
 	rayv1 "github.com/ray-project/kuberay/ray-operator/apis/ray/v1"
 	"github.com/ray-project/kuberay/ray-operator/controllers/ray/utils/dashboardclient"
@@ -457,6 +458,31 @@ func ValidateRayServiceSpec(rayService *rayv1.RayService) error {
 		}
 	}
 
+	return nil
+}
+
+// RayServiceIncrementalUpgradeWarnings returns admission warnings for NewClusterWithIncrementalUpgrade
+// when stepSizePercent is greater than maxSurgePercent. Traffic migration is still valid but each shift
+// is capped by Serve target_capacity (which grows by at most maxSurgePercent per step); see ClusterUpgradeOptions godoc.
+func RayServiceIncrementalUpgradeWarnings(rayService *rayv1.RayService) []string {
+	if !IsIncrementalUpgradeEnabled(&rayService.Spec) {
+		return nil
+	}
+	options := rayService.Spec.UpgradeStrategy.ClusterUpgradeOptions
+	if options == nil || options.StepSizePercent == nil {
+		return nil
+	}
+	maxSurge := ptr.Deref(options.MaxSurgePercent, 100)
+	if *options.StepSizePercent > maxSurge {
+		return []string{
+			fmt.Sprintf(
+				"spec.upgradeStrategy.clusterUpgradeOptions: stepSizePercent (%d) is greater than maxSurgePercent (%d); "+
+					"each traffic shift is capped by the pending or active RayCluster's Serve target_capacity until capacity catches up. "+
+					"Consider stepSizePercent <= maxSurgePercent if you want multiple smaller traffic steps within each surge band.",
+				*options.StepSizePercent, maxSurge,
+			),
+		}
+	}
 	return nil
 }
 

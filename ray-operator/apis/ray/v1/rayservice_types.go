@@ -62,13 +62,14 @@ var DeploymentStatusEnum = struct {
 
 // These options are currently only supported for the IncrementalUpgrade type.
 type ClusterUpgradeOptions struct {
-	// The capacity of serve requests the upgraded cluster should scale to handle each interval.
+	// The capacity of serve requests the upgraded cluster should scale to handle for each iteration.
 	// Defaults to 100%.
 	// +kubebuilder:default:=100
 	MaxSurgePercent *int32 `json:"maxSurgePercent,omitempty"`
 	// The percentage of traffic to switch to the upgraded RayCluster at a set interval after scaling by MaxSurgePercent.
+	// The effective increase is capped by the upgraded cluster's TargetCapacity, which grows according to MaxSurgePercent.
 	StepSizePercent *int32 `json:"stepSizePercent"`
-	// The interval in seconds between transferring StepSize traffic from the old to new RayCluster.
+	// The interval in seconds between transferring StepSizePercent traffic from the old to new RayCluster.
 	IntervalSeconds *int32 `json:"intervalSeconds"`
 	// The name of the Gateway Class installed by the Kubernetes Cluster admin.
 	GatewayClassName string `json:"gatewayClassName"`

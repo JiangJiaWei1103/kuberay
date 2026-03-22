@@ -36,14 +36,14 @@ var _ webhook.CustomValidator = &RayServiceWebhook{}
 func (w *RayServiceWebhook) ValidateCreate(_ context.Context, obj runtime.Object) (admission.Warnings, error) {
 	rayService := obj.(*rayv1.RayService)
 	rayServiceLog.Info("validate create", "name", rayService.Name)
-	return nil, w.validateRayService(rayService)
+	return admission.Warnings(utils.RayServiceIncrementalUpgradeWarnings(rayService)), w.validateRayService(rayService)
 }
 
 // ValidateUpdate implements webhook.CustomValidator so a webhook will be registered for the type
 func (w *RayServiceWebhook) ValidateUpdate(_ context.Context, _ runtime.Object, newObj runtime.Object) (admission.Warnings, error) {
 	rayService := newObj.(*rayv1.RayService)
 	rayServiceLog.Info("validate update", "name", rayService.Name)
-	return nil, w.validateRayService(rayService)
+	return admission.Warnings(utils.RayServiceIncrementalUpgradeWarnings(rayService)), w.validateRayService(rayService)
 }
 
 // ValidateDelete implements webhook.CustomValidator so a webhook will be registered for the type
