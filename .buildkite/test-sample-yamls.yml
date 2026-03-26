@@ -1,6 +1,4 @@
 - label: 'Test Sample YAMLs (nightly operator)'
-  instance_size: large
-  image: golang:1.25-bookworm
   commands:
     - source .buildkite/setup-env.sh
     - kind create cluster --wait 900s --config ./ci/kind-config-buildkite.yml
@@ -20,8 +18,6 @@
     - kubectl logs --tail -1 -l app.kubernetes.io/name=kuberay
 
 - label: 'Test Sample YAMLs (latest release)'
-  instance_size: large
-  image: golang:1.25-bookworm
   commands:
     - source .buildkite/setup-env.sh
     - kind create cluster --wait 900s --config ./ci/kind-config-buildkite.yml
