@@ -6,8 +6,6 @@
 #
 # Use the same image family as other KubeRay Buildkite steps.
 - label: ':pipeline: Boostrap Pipeline - Upload Conditional Pipeline Steps'
-  instance_size: small
-  image: golang:1.25-bookworm
   commands:
     - chmod +x .buildkite/upload-pipeline.sh
     - ./.buildkite/upload-pipeline.sh
