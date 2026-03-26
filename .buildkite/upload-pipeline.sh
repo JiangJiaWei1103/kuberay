@@ -98,12 +98,12 @@ resolve_pr_mode() {
     [[ -z "${file}" ]] && continue
 
     if [[ "${ignore_buildkite}" == "true" && "${file}" == .buildkite/* ]]; then
-      echo "skip file (ignored by KUBERAY_CI_IGNORE_BUILDKITE_CHANGES): ${file}"
+      echo "skip file (ignored by KUBERAY_CI_IGNORE_BUILDKITE_CHANGES): ${file}" >&2
       continue
     fi
 
     ((effective_change_count += 1))
-    echo "file: ${file}"
+    echo "file: ${file}" >&2
     if is_historyserver_path "${file}"; then
       historyserver_changed=true
     else
