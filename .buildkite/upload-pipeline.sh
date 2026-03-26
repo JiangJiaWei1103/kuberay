@@ -13,11 +13,14 @@
 #
 # Optional override (environment variable):
 #   KUBERAY_CI_PIPELINE=all|main-bundle|historyserver
+#   KUBERAY_CI_IGNORE_BUILDKITE_CHANGES=true|false
 #
 # Description:
 #   - KUBERAY_CI_PIPELINE=all: Upload everything, including history server E2E.
 #   - KUBERAY_CI_PIPELINE=main-bundle: Upload the main bundle without history server E2E.
 #   - KUBERAY_CI_PIPELINE=historyserver: Upload only the history server E2E pipeline.
+#   - KUBERAY_CI_IGNORE_BUILDKITE_CHANGES=true: Ignore .buildkite/* paths when
+#     resolving PR path mode (useful for local testing of historyserver-only changes).
 
 set -euo pipefail
 
@@ -80,18 +83,26 @@ resolve_pr_mode() {
     return
   fi
 
-  if [[ -z "${changed// }" ]]; then
-    echo "!!! no changes; defaulting to all (including history server)" >&2
-    echo "all"
-    return
-  fi
+  # if [[ -z "${changed// }" ]]; then
+  #   echo "!!! no changes; defaulting to all (including history server)" >&2
+  #   echo "all"
+  #   return
+  # fi
 
+  local ignore_buildkite="${KUBERAY_CI_IGNORE_BUILDKITE_CHANGES:-true}"
   local historyserver_changed=false
   local other_changed=false
+  local effective_change_count=0
 
   while IFS= read -r file; do
     [[ -z "${file}" ]] && continue
 
+    if [[ "${ignore_buildkite}" == "true" && "${file}" == .buildkite/* ]]; then
+      echo "skip file (ignored by KUBERAY_CI_IGNORE_BUILDKITE_CHANGES): ${file}"
+      continue
+    fi
+
+    ((effective_change_count += 1))
     echo "file: ${file}"
     if is_historyserver_path "${file}"; then
       historyserver_changed=true
@@ -99,6 +110,12 @@ resolve_pr_mode() {
       other_changed=true
     fi
   done <<< "${changed}"
+
+  if [[ "${effective_change_count}" -eq 0 ]]; then
+    echo "!!! no effective changes after filtering; defaulting to all (including history server)" >&2
+    echo "all"
+    return
+  fi
 
   if [[ "${historyserver_changed}" == "true" && "${other_changed}" == "true" ]]; then
     echo "all"
