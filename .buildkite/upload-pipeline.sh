@@ -91,6 +91,8 @@ resolve_pr_mode() {
 
   while IFS= read -r file; do
     [[ -z "${file}" ]] && continue
+
+    echo "file: ${file}"
     if is_historyserver_path "${file}"; then
       historyserver_changed=true
     else
