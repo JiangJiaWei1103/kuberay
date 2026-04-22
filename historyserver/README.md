@@ -1,145 +1,47 @@
-# KubeRay History Server
+# Raw vs Processed Event Size
 
-This project is under active development.
-See [#ray-history-server](https://app.slack.com/client/TN4768NRM/C09QLLU8HTL) channel to provide feedback.
+Measure inflation ratio of **raw bytes to in-mem bytes** when the history server reads raw event files into the 5
+`Cluster*Map`.
 
-Ray History Server is a service for collecting, storing, and viewing historical logs and metadata from Ray clusters.
-It provides a web interface to explore the history of Ray jobs, tasks, actors, and other cluster activities.
+| File | Change |
+|------|--------|
+| `pkg/eventserver/memsize.go` | New. `DeepSize` walker + `MeasureMapSizes` + `LogMapSizes` |
+| `pkg/eventserver/eventserver.go` | `processAllEvents` returns `int64` (raw bytes total); calls `LogMapSizes` at end of each call |
+| `pkg/eventserver/log_event_reader.go` | `readEventFile` / `ReadLogEvents` return `(int64, error)`; sum per-line `n` for raw byte total |
 
-## Components
+## How raw bytes are counted
 
-The History Server consists of two main components:
+- JSON event files (task/actor/job/node)
+  - `io.ReadAll(eventioReader)`: Whole file into a buffer
+  - `rawBytes += len(eventbytes)`
 
-1. **Collector**: Runs as a sidecar container in Ray clusters to collect logs and metadata
-2. **History Server**: Central service that aggregates data from collectors and provides a web UI
+- Log event files (events API, JSON Lines)
+  - `bufio` line-by-line
+  - Sum the per-line `n` returned by `readLineWithLimit`
 
-## Building
+Sum of both paths = Total bytes pulled from storage in a single `processAllEvents()` call
 
-### Prerequisites
+## How in-memory bytes are computed
 
-- Go 1.19 or higher
-- Docker (for building container images)
-- Make
+Recursively walks the object graph via `reflect`:
 
-### Building Binaries
+| Kind | Rule |
+|------|------|
+| Pointer | pointer header (8B) + recurse into pointee (visited set guards cycles / shared refs) |
+| String | string header (16B) + len(s) raw byte content |
+| Slice | slice header (24B) + cap × elemSize (backing array) + deep extras of each element |
+| Map | map header + len × (keySize + valSize + 11B bucket overhead) + deep extras of every key/value |
+| Struct / Array | type's own size + deep extras of each field/element |
+| Scalars (int, bool, …) | just `Type().Size()` |
 
-To build the binaries locally:
+### Per-map measurement (MeasureMapSizes)
 
-```bash
-make build
-```
+Measure 5 maps with `DeepSize(map)` sequentially, then sum = TotalBytes.
 
-This will generate two binaries in the `output/bin/` directory:
+## Logging
 
-- `collector`: The collector service that runs alongside Ray nodes
-- `historyserver`: The main history server service
-
-You can also build individual components:
-
-```bash
-make buildcollector      # Build only the collector
-make buildhistoryserver  # Build only the history server
-```
-
-### Building Docker Images
-
-To build a Docker image:
+Right after each `processAllEvents()` call (once on startup + once per hourly tick):
 
 ```bash
-make localimage
+time="2026-04-22T08:00:01Z" level=info msg="[memsize] raw=56.03KiB in_mem=27.21KiB ratio=0.49x | task=18.53KiB actor=782B job=1.14KiB node=40B log_event=6.74KiB"
 ```
-
-This creates a Docker image named `historyserver:laster` with both binaries and necessary assets.
-
-For multi-platform builds, you can use:
-
-```bash
-docker buildx build -t <image-name>:<tag> --platform linux/amd64,linux/arm64 . --push
-```
-
-## Configuration
-
-### History Server Configuration
-
-The history server can be configured using command-line flags:
-
-- `--runtime-class-name`: Storage backend type (e.g., "s3", "aliyunoss", "localtest")
-- `--ray-root-dir`: Root directory for Ray logs
-- `--kubeconfigs`: Path to kubeconfig file(s) for accessing Kubernetes clusters
-- `--dashboard-dir`: Directory containing dashboard assets (default: "/dashboard")
-- `--runtime-class-config-path`: Path to runtime class configuration file
-
-### Collector Configuration
-
-The collector can be configured using command-line flags:
-
-- `--role`: Node role ("Head" or "Worker")
-- `--runtime-class-name`: Storage backend type (e.g., "s3", "aliyunoss")
-- `--ray-cluster-name`: Name of the Ray cluster
-- `--ray-cluster-namespace`: Namespace of the Ray cluster
-- `--ray-root-dir`: Root directory for Ray logs
-- `--log-batching`: Number of log entries to batch before writing
-- `--events-port`: Port for the events server
-- `--push-interval`: Interval between pushes to storage
-- `--runtime-class-config-path`: Path to runtime class configuration file
-
-## Supported Storage Backends
-
-History Server supports multiple storage backends:
-
-1. **S3/MinIO**: For AWS S3 or MinIO compatible storage
-2. **Aliyun OSS**: For Alibaba Cloud Object Storage Service
-3. **Local Test**: For local testing and development
-
-Each backend requires specific configuration parameters passed through environment variables or configuration files.
-
-## Running
-
-### Running the History Server
-
-```bash
-./output/bin/historyserver \
-  --runtime-class-name=s3 \
-  --ray-root-dir=/path/to/logs
-```
-
-### Running the Collector
-
-```bash
-./output/bin/collector \
-  --role=Head \
-  --runtime-class-name=s3 \
-  --ray-cluster-name=my-cluster \
-  --ray-root-dir=/path/to/logs
-```
-
-## Development
-
-### Code Structure
-
-- `cmd/`: Main applications (collector and historyserver)
-- `pkg/`: Core logic for storage backends and collection
-- `pkg/collector/`: Collector-specific code
-- `pkg/storage/`: Storage backend implementations
-- `dashboard/`: Web UI files
-
-### Testing
-
-To run tests:
-
-```bash
-make test
-```
-
-### Linting
-
-To run lint checks:
-
-```bash
-make alllint
-```
-
-## Deployment
-
-History Server can be deployed in Kubernetes using the manifests in the `config/samples/` directory.
-Examples are provided for different storage backends including MinIO and Aliyun OSS.
