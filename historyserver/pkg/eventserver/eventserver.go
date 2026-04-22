@@ -127,8 +127,10 @@ func (h *EventHandler) Run(stop chan struct{}, numOfEventProcessors int) error {
 		// Create a LogEventReader for reading logs/events/event_*.log files
 		logEventReader := NewLogEventReader(h.reader)
 
-		// Helper function to process all events
-		processAllEvents := func() {
+		// Helper function to process all events.
+		// Returns the total raw bytes pulled off storage.
+		processAllEvents := func() int64 {
+			var rawBytes int64
 			clusterList := h.reader.List()
 			for _, clusterInfo := range clusterList {
 				clusterNameNamespace := clusterInfo.Name + "_" + clusterInfo.Namespace
@@ -136,7 +138,9 @@ func (h *EventHandler) Run(stop chan struct{}, numOfEventProcessors int) error {
 
 				// Read Log Events from logs/{nodeId}/events/event_*.log
 				// This is the format used by Ray Dashboard's /events API
-				if err := logEventReader.ReadLogEvents(clusterInfo, clusterSessionKey, h.ClusterLogEventMap); err != nil {
+				logEventBytes, err := logEventReader.ReadLogEvents(clusterInfo, clusterSessionKey, h.ClusterLogEventMap)
+				rawBytes += logEventBytes
+				if err != nil {
 					logrus.Errorf("Failed to read Log Events for %s: %v", clusterSessionKey, err)
 				}
 
@@ -159,6 +163,7 @@ func (h *EventHandler) Run(stop chan struct{}, numOfEventProcessors int) error {
 						logrus.Errorf("Failed to read event file: %v", err)
 						continue
 					}
+					rawBytes += int64(len(eventbytes))
 
 					var eventList []map[string]any
 					if err := json.Unmarshal(eventbytes, &eventList); err != nil {
@@ -177,10 +182,12 @@ func (h *EventHandler) Run(stop chan struct{}, numOfEventProcessors int) error {
 					}
 				}
 			}
+			return rawBytes
 		}
 
 		// Process events immediately on startup
-		processAllEvents()
+		raw := processAllEvents()
+		h.LogMapSizes(raw)
 
 		// Create a ticker for hourly processing
 		ticker := time.NewTicker(1 * time.Hour)
@@ -199,7 +206,8 @@ func (h *EventHandler) Run(stop chan struct{}, numOfEventProcessors int) error {
 				return
 			case <-ticker.C:
 				// Process events every hour
-				processAllEvents()
+				raw := processAllEvents()
+				h.LogMapSizes(raw)
 			}
 		}
 	}()

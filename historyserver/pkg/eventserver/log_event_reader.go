@@ -47,10 +47,11 @@ func NewLogEventReader(reader storage.StorageReader) *LogEventReader {
 
 // ReadLogEvents reads all Log Events from logs/{nodeId}/events/event_*.log files
 // and stores them in the provided ClusterLogEventMap.
+// Returns the total raw bytes pulled off storage across every event file processed.
 //
 // Path structure in storage: {clusterName}_{namespace}/{sessionName}/logs/{nodeId}/events/event_*.log
 // This is called from eventserver.go Run() to populate events for a cluster session.
-func (r *LogEventReader) ReadLogEvents(clusterInfo utils.ClusterInfo, clusterSessionKey string, eventStore *types.ClusterLogEventMap) error {
+func (r *LogEventReader) ReadLogEvents(clusterInfo utils.ClusterInfo, clusterSessionKey string, eventStore *types.ClusterLogEventMap) (int64, error) {
 	// Build cluster ID used by StorageReader
 	clusterID := clusterInfo.Name + "_" + clusterInfo.Namespace
 
@@ -80,6 +81,7 @@ func (r *LogEventReader) ReadLogEvents(clusterInfo utils.ClusterInfo, clusterSes
 	}
 	logrus.Debugf("Found %d node directories for cluster %s: %v", len(nodeIDs), clusterSessionKey, nodeIDs)
 
+	var totalBytes int64
 	for _, nodeID := range nodeIDs {
 		// Path: {sessionName}/logs/{nodeId}/events/
 		eventsDir := path.Join(clusterInfo.SessionName, utils.RAY_SESSIONDIR_LOGDIR_NAME, nodeID, "events")
@@ -98,40 +100,46 @@ func (r *LogEventReader) ReadLogEvents(clusterInfo utils.ClusterInfo, clusterSes
 			// Read and parse the event file
 			// Note: Duplicate events are handled by JobEventMap's deduplication using event_id as key.
 			// This matches the design of existing RayEvents reading in eventserver.go.
-			if err := r.readEventFile(clusterID, eventFilePath, jobEventMap); err != nil {
+			fileBytes, err := r.readEventFile(clusterID, eventFilePath, jobEventMap)
+			totalBytes += fileBytes
+			if err != nil {
 				logrus.Warnf("Failed to read event file %s: %v", eventFilePath, err)
 				// Continue with other files - failed files will be retried in the next cycle
 			}
 		}
 	}
 
-	return nil
+	return totalBytes, nil
 }
 
 // readEventFile reads and parses a single event_*.log file (JSON Lines format).
 // Lines exceeding maxLineLengthLimit are drained and skipped without accumulating
 // in memory, matching Ray Dashboard's _read_file() behavior in event_utils.py.
-func (r *LogEventReader) readEventFile(clusterID, filePath string, jobEventMap *types.JobEventMap) error {
+//
+// Returns the total raw bytes consumed from the underlying reader.
+func (r *LogEventReader) readEventFile(clusterID, filePath string, jobEventMap *types.JobEventMap) (int64, error) {
 	ioReader := r.reader.GetContent(clusterID, filePath)
 	if ioReader == nil {
-		return fmt.Errorf("failed to get content for %s", filePath)
+		return 0, fmt.Errorf("failed to get content for %s", filePath)
 	}
 
 	// Use a moderate initial buffer (64KB); readLineWithLimit handles long-line
 	// draining so we never accumulate more than maxLineLengthLimit in memory.
 	br := bufio.NewReaderSize(ioReader, 64*1024)
 
+	var totalBytes int64
 	lineNum := 0
 	eventCount := 0
 	for {
 		line, n, tooLong, err := readLineWithLimit(br, maxLineLengthLimit)
+		totalBytes += int64(n)
 
 		// No remaining data — clean EOF with nothing left to process
 		if err == io.EOF && n == 0 {
 			break
 		}
 		if err != nil && err != io.EOF {
-			return fmt.Errorf("error reading %s at line %d: %w", filePath, lineNum+1, err)
+			return totalBytes, fmt.Errorf("error reading %s at line %d: %w", filePath, lineNum+1, err)
 		}
 
 		lineNum++
@@ -153,7 +161,7 @@ func (r *LogEventReader) readEventFile(clusterID, filePath string, jobEventMap *
 	}
 
 	logrus.Debugf("Read %d events from %s (%d lines)", eventCount, filePath, lineNum)
-	return nil
+	return totalBytes, nil
 }
 
 // readLineWithLimit reads one logical line (up to the next '\n') from br.
